@@ -64,9 +64,9 @@ struct job_t job_list[MAXJOBS]; /* The job list */
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
-./runtrace -f trace15.txt -s ./tshref -V
-./runtrace -f trace15.txt -s ./tsh -V
-./sdriver -t 15 -V
+./runtrace -f trace18.txt -s ./tshref -V
+./runtrace -f trace18.txt -s ./tsh -V
+./sdriver -t 18 -V
 
 ./sdriver -i 1
 

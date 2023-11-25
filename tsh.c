@@ -293,58 +293,39 @@ eval(char *cmdline)
             fprintf(stdout,"invalid instruction\n");
             return;
         }
+        struct job_t *job;
         if (tok.argv[1][0] == '%')
         {
             int jid = atoi(&tok.argv[1][1]);
-            struct job_t *job = getjobjid(job_list,jid);
+            job = getjobjid(job_list,jid);
             if (job == NULL)
             {
                 fprintf(stdout,"invalid instruction\n");
                 return;
             }
-
-            job -> state = FG;
-            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
-            if (kill(-job->pid,SIGCONT) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
-            }
-            
-            pid = 0;
-            while (!pid)
-            {
-                sigsuspend(&prev);
-            }
-            sigprocmask(SIG_SETMASK,&prev,NULL);
-            return;
         }      
         else
         {
             int pid = atoi(tok.argv[1]);
-            struct job_t *job = getjobpid(job_list,pid);
+            job = getjobpid(job_list,pid);
             if (job == NULL)
             {
                 fprintf(stdout,"invalid instruction\n");
                 return;
             }
-
-            job -> state = FG;
-            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
-            if (kill(-job->pid,SIGCONT) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
-            }
-            
-            pid = 0;
-            while (!pid)
-            {
-                sigsuspend(&prev);
-            }
-            sigprocmask(SIG_SETMASK,&prev,NULL);
-            return;                    
         }
+        job -> state = FG;
+        sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+        if (kill(-job->pid,SIGCONT) == -1)
+        {
+            fprintf(stdout,"kill error\n");
+            return;                        
+        }
+        while (fgpid(job_list)!=0)
+        {
+            sigsuspend(&prev);
+        }
+        sigprocmask(SIG_SETMASK,&prev,NULL);
     }
 
     if (tok.builtins == BUILTIN_KILL)
