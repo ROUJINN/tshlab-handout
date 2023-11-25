@@ -64,19 +64,12 @@ struct job_t job_list[MAXJOBS]; /* The job list */
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
-./runtrace -f trace10.txt -s ./tshref -V
-./runtrace -f trace10.txt -s ./tsh -V
+./runtrace -f trace15.txt -s ./tshref -V
+./runtrace -f trace15.txt -s ./tsh -V
 ./sdriver -t 15 -V
 
 ./sdriver -i 1
 
-./myspin1
-./myspin2 1
-./myintp
-./mytstpp
-
-./myspin1 5 &
-/usr/bin/pkill myspin1
 
 octal \076 is > and octal \046 is &
 

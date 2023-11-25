@@ -265,7 +265,8 @@ eval(char *cmdline)
             {
                 fprintf(stdout,"kill error\n");
                 return;                        
-            }                   
+            }
+            printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);                   
         }
         else
         {
@@ -281,7 +282,8 @@ eval(char *cmdline)
             {
                 fprintf(stdout,"kill error\n");
                 return;                        
-            }                         
+            }
+            printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);                         
         }
     }
     if (tok.builtins == BUILTIN_FG)
@@ -419,38 +421,42 @@ eval(char *cmdline)
         return; /* to be done */
     }
 
-    sigprocmask(SIG_BLOCK, &mask_three, &prev);
-    if ((pid = fork()) == 0)
+    if (tok.builtins == BUILTIN_NONE)
     {
-        setpgid(0,0);
-        sigprocmask(SIG_SETMASK, &prev,NULL);
-        // sio_put("%d %d\n",getpid(),getpgrp());
-        if (execve(tok.argv[0],tok.argv,environ) < 0)
+        sigprocmask(SIG_BLOCK, &mask_three, &prev);
+        if ((pid = fork()) == 0)
         {
-            printf("%s: Command not found\n",cmdline);
-            exit(0);
+            setpgid(0,0);
+            sigprocmask(SIG_SETMASK, &prev,NULL);
+            // sio_put("%d %d\n",getpid(),getpgrp());
+            if (execve(tok.argv[0],tok.argv,environ) < 0)
+            {
+                printf("%s: Command not found\n",cmdline);
+                exit(0);
+            }
+        }
+
+        if (bg == 1) /*if the user has requested a BG job*/
+        {
+            sigprocmask(SIG_BLOCK, &mask_all, NULL);
+            addjob(job_list,pid,BG,cmdline);
+            //sigprocmask(SIG_SETMASK,&prev,NULL);
+            printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
+            sigprocmask(SIG_SETMASK,&prev,NULL);
+        }
+        else
+        {
+            sigprocmask(SIG_BLOCK, &mask_all, NULL);
+            addjob(job_list,pid,FG,cmdline);
+            sigprocmask(SIG_SETMASK,&prev,NULL);
+            while (fgpid(job_list)!=0)
+            {
+                sigsuspend(&prev);
+            }
+            sigprocmask(SIG_SETMASK,&prev,NULL);
         }
     }
 
-    if (bg == 1) /*if the user has requested a BG job*/
-    {
-        sigprocmask(SIG_BLOCK, &mask_all, NULL);
-        addjob(job_list,pid,BG,cmdline);
-        //sigprocmask(SIG_SETMASK,&prev,NULL);
-        printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
-        sigprocmask(SIG_SETMASK,&prev,NULL);
-    }
-    else
-    {
-        sigprocmask(SIG_BLOCK, &mask_all, NULL);
-        addjob(job_list,pid,FG,cmdline);
-        sigprocmask(SIG_SETMASK,&prev,NULL);
-        while (fgpid(job_list)!=0)
-        {
-            sigsuspend(&prev);
-        }
-        sigprocmask(SIG_SETMASK,&prev,NULL);
-    }
 
 }
 
