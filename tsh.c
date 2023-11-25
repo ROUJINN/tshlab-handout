@@ -435,8 +435,8 @@ eval(char *cmdline)
     if (bg == 1) /*if the user has requested a BG job*/
     {
         sigprocmask(SIG_BLOCK, &mask_all, NULL);
-        addjob(job_list,pid,FG,cmdline);
-        sigprocmask(SIG_SETMASK,&prev,NULL);
+        addjob(job_list,pid,BG,cmdline);
+        //sigprocmask(SIG_SETMASK,&prev,NULL);
         printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
         sigprocmask(SIG_SETMASK,&prev,NULL);
     }
@@ -639,6 +639,12 @@ sigchld_handler(int sig)
             job->jid,job->pid,WTERMSIG(status));
             deletejob(job_list,pid);
         }
+        if (WIFSTOPPED(status))
+        {
+            job -> state = ST;
+            sio_put("Job [%d] (%d) stopped by signal %d\n",
+            job->jid,job->pid,WSTOPSIG(status));            
+        }
     }
     errno = olderror;
     return;
@@ -679,6 +685,17 @@ sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    pid = fgpid(job_list);
+    if (pid != 0)
+    {
+        //sio_put("%d\n",fgpid(job_list));
+        if (kill(-pid,SIGTSTP) == -1)
+        {
+            sio_put("kill error\n");
+            exit(0);                        
+        }
+        return;
+    }
     return;
 }
 
