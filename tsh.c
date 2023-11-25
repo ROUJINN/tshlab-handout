@@ -28,6 +28,9 @@
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
+#define POSITIVE      0
+#define NEGATIVE      1
+
 /* 
  * Jobs states: FG (foreground), BG (background), ST (stopped)
  * Job state transitions and enabling actions:
@@ -201,12 +204,12 @@ eval(char *cmdline)
 {
     int bg;              /* should the job run in bg or fg? */
     int fd;
-    sigset_t mask_all, mask_one, prev_one;
+    sigset_t mask_all,mask_sigchld,prev;
     struct cmdline_tokens tok;
 
     sigfillset(&mask_all);
-    sigemptyset(&mask_one);
-    sigaddset(&mask_one,SIGCHLD);
+    sigemptyset(&mask_sigchld);
+    sigaddset(&mask_sigchld,SIGCHLD);
 
     /* Parse command line */
     bg = parseline(cmdline, &tok); 
@@ -216,98 +219,216 @@ eval(char *cmdline)
     if (tok.argv[0] == NULL) /* ignore empty lines */
         return;
 
-    if (tok.builtins != BUILTIN_NONE)
+    if (tok.builtins == BUILTIN_QUIT)
     {
-        switch (tok.builtins)
+        exit(0);
+    }
+
+    if (tok.builtins == BUILTIN_JOBS)
+    {
+        if (tok.outfile)
         {
-            case BUILTIN_NONE:
+            if ((fd = open(tok.outfile,O_RDWR) == -1))
+            {
+                fprintf(stderr, "error:%s\n", strerror(errno));
                 return;
-            case BUILTIN_QUIT:
-                exit(0);
-            case BUILTIN_JOBS:
-                if (tok.outfile)
-                {
-                    if ((fd = open(tok.outfile,O_RDWR) == -1))
-                    {
-                        fprintf(stderr, "error:%s\n", strerror(errno));
-                        return;
-                    }
-                    listjobs(job_list,fd);
-                }
-                else
-                {
-                    listjobs(job_list,STDOUT_FILENO);
-                }
-                break;
-            case BUILTIN_BG:
-                if ((tok.argc != 2) | (tok.argv == NULL))
-                {
-                    fprintf(stdout,"invalid instruction\n");
-                    return;
-                }
-                if (tok.argv[1][0] == '%')
-                {
-                    int jid = atoi(&tok.argv[1][1]);
-                    struct job_t *job = getjobjid(job_list,jid);
-                    if (job == NULL)
-                    {
-                        fprintf(stdout,"invalid instruction\n");
-                        return;
-                    }
-                    job -> state = BG;
-                    if (kill(-job->pid,SIGCONT) == -1)
-                    {
-                        fprintf(stdout,"kill error\n");
-                        return;                        
-                    }                   
-                }
-                else
-                {
-                    int pid = atoi(tok.argv[1]);
-                    struct job_t *job = getjobpid(job_list,pid);
-                    if (job == NULL)
-                    {
-                        fprintf(stdout,"invalid instruction\n");
-                        return;
-                    }
-                    job -> state = BG;
-                    if (kill(-job->pid,SIGCONT) == -1)
-                    {
-                        fprintf(stdout,"kill error\n");
-                        return;                        
-                    }                         
-                }
-            case BUILTIN_FG:
-                if ((tok.argc != 2) | (tok.argv == NULL))
-                {
-                    fprintf(stdout,"invalid instruction\n");
-                    return;
-                }
-                if (tok.argv[1][0] == '%')
-                {
-                    int jid = atoi(&tok.argv[1][1]);
-                    struct job_t *job = getjobjid(job_list,jid);
-                    if (job == NULL)
-                    {
-                        fprintf(stdout,"invalid instruction\n");
-                        return;
-                    }
-                    job -> state = FG;
-                    if (kill(-job->pid,SIGCONT) == -1)
-                    {
-                        fprintf(stdout,"kill error\n");
-                        return;                        
-                    }                           
-                }      
-            case BUILTIN_KILL:
-                kill_job();
-            case BUILTIN_NOHUP:
-                nohup();
+            }
+            listjobs(job_list,fd);
+        }
+        else
+        {
+            listjobs(job_list,STDOUT_FILENO);
+        }
+        return;
+    }  
+    if (tok.builtins == BUILTIN_BG)
+    {
+        if ((tok.argc != 2) | (tok.argv == NULL))
+        {
+            fprintf(stdout,"invalid instruction\n");
+            return;
+        }
+        if (tok.argv[1][0] == '%')
+        {
+            int jid = atoi(&tok.argv[1][1]);
+            struct job_t *job = getjobjid(job_list,jid);
+            if (job == NULL)
+            {
+                fprintf(stdout,"invalid instruction\n");
+                return;
+            }
+            job -> state = BG;
+            if (kill(-job->pid,SIGCONT) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }                   
+        }
+        else
+        {
+            int pid = atoi(tok.argv[1]);
+            struct job_t *job = getjobpid(job_list,pid);
+            if (job == NULL)
+            {
+                fprintf(stdout,"invalid instruction\n");
+                return;
+            }
+            job -> state = BG;
+            if (kill(-job->pid,SIGCONT) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }                         
         }
     }
-    
+    if (tok.builtins == BUILTIN_FG)
+    {
+        if ((tok.argc != 2) | (tok.argv == NULL))
+        {
+            fprintf(stdout,"invalid instruction\n");
+            return;
+        }
+        if (tok.argv[1][0] == '%')
+        {
+            int jid = atoi(&tok.argv[1][1]);
+            struct job_t *job = getjobjid(job_list,jid);
+            if (job == NULL)
+            {
+                fprintf(stdout,"invalid instruction\n");
+                return;
+            }
 
-    return;
+            job -> state = FG;
+            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+            if (kill(-job->pid,SIGCONT) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }
+            
+            pid = 0;
+            while (!pid)
+            {
+                sigsuspend(&prev);
+            }
+            sigprocmask(SIG_SETMASK,&prev,NULL);
+            return;
+        }      
+        else
+        {
+            int pid = atoi(tok.argv[1]);
+            struct job_t *job = getjobpid(job_list,pid);
+            if (job == NULL)
+            {
+                fprintf(stdout,"invalid instruction\n");
+                return;
+            }
+
+            job -> state = FG;
+            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+            if (kill(-job->pid,SIGCONT) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }
+            
+            pid = 0;
+            while (!pid)
+            {
+                sigsuspend(&prev);
+            }
+            sigprocmask(SIG_SETMASK,&prev,NULL);
+            return;                    
+        }
+    }
+
+    if (tok.builtins == BUILTIN_KILL)
+    {
+        if ((tok.argc != 2) | (tok.argv == NULL))
+        {
+            fprintf(stdout,"invalid instruction\n");
+            return;
+        }
+        if (tok.argv[1][0] == '%')
+        {
+            int jid = atoi(&tok.argv[1][1]);
+            int jid_flag = POSITIVE;
+            if (jid < 0)
+            {
+                jid = -jid;
+                jid_flag = NEGATIVE;
+            }
+            struct job_t *job = getjobjid(job_list,jid);
+            if (job == NULL)
+            {
+                if (jid_flag == POSITIVE)
+                {
+                    fprintf(stdout,"%%%d: No such job\n",jid);
+                }
+                else
+                {
+                    fprintf(stdout,"%%%d: No such process group\n",jid);
+                }
+                return;
+            }
+            job -> state = ST;
+            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+            if (kill(-job->pid,SIGTERM) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }                    
+        }
+        else
+        {
+            int pid = atoi(tok.argv[1]);
+            int pid_flag = POSITIVE;
+            if (pid < 0)
+            {
+                pid = -pid;
+                pid_flag = NEGATIVE;
+            }
+            struct job_t *job = getjobpid(job_list,pid);
+            if (job == NULL)
+            {
+                if (pid_flag == POSITIVE)
+                {
+                    fprintf(stdout,"(%d): No such job\n",pid);
+                }
+                else
+                {
+                    fprintf(stdout,"(%d): No such process group\n",pid);
+                }
+                return;
+            }
+            job -> state = ST;
+            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+            if (kill(-job->pid,SIGTERM) == -1)
+            {
+                fprintf(stdout,"kill error\n");
+                return;                        
+            }                                    
+        }
+    }
+
+    if (tok.builtins == BUILTIN_NOHUP)
+    {
+        return; /* to be done */
+    }
+
+    sigprocmask(SIG_BLOCK, &mask_sigchld, &prev);
+    if ((pid = fork()) == 0)
+    {
+        sigprocmask(SIG_BLOCK, &prev,NULL);
+        execve(tok.argv[0],tok.argv,environ);
+    }
+
+    pid = 0;
+    while (!pid)
+    {
+        sigsuspend(&prev);
+    }
+    sigprocmask(SIG_SETMASK,&prev,NULL);
 }
 
 /* 
@@ -477,6 +598,9 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
 void 
 sigchld_handler(int sig) 
 {
+    int olderror = errno;
+    pid = waitpid(-1,NULL,WNOHANG | WUNTRACED);
+    errno = olderror;
     return;
 }
 
