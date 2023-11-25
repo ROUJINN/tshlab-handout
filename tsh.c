@@ -204,12 +204,15 @@ eval(char *cmdline)
 {
     int bg;              /* should the job run in bg or fg? */
     int fd;
-    sigset_t mask_all,mask_sigchld,prev;
+    sigset_t mask_all,mask_sigchld,mask_three,prev;
     struct cmdline_tokens tok;
 
     sigfillset(&mask_all);
     sigemptyset(&mask_sigchld);
     sigaddset(&mask_sigchld,SIGCHLD);
+    sigaddset(&mask_three,SIGCHLD);
+    sigaddset(&mask_three,SIGINT);
+    sigaddset(&mask_three,SIGTSTP);
 
     /* Parse command line */
     bg = parseline(cmdline, &tok); 
@@ -416,19 +419,39 @@ eval(char *cmdline)
         return; /* to be done */
     }
 
-    sigprocmask(SIG_BLOCK, &mask_sigchld, &prev);
+    sigprocmask(SIG_BLOCK, &mask_three, &prev);
     if ((pid = fork()) == 0)
     {
-        sigprocmask(SIG_BLOCK, &prev,NULL);
-        execve(tok.argv[0],tok.argv,environ);
+        setpgid(0,0);
+        sigprocmask(SIG_SETMASK, &prev,NULL);
+        // sio_put("%d %d\n",getpid(),getpgrp());
+        if (execve(tok.argv[0],tok.argv,environ) < 0)
+        {
+            printf("%s: Command not found\n",cmdline);
+            exit(0);
+        }
     }
 
-    pid = 0;
-    while (!pid)
+    if (bg == 1) /*if the user has requested a BG job*/
     {
-        sigsuspend(&prev);
+        sigprocmask(SIG_BLOCK, &mask_all, NULL);
+        addjob(job_list,pid,FG,cmdline);
+        sigprocmask(SIG_SETMASK,&prev,NULL);
+        printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
+        sigprocmask(SIG_SETMASK,&prev,NULL);
     }
-    sigprocmask(SIG_SETMASK,&prev,NULL);
+    else
+    {
+        sigprocmask(SIG_BLOCK, &mask_all, NULL);
+        addjob(job_list,pid,FG,cmdline);
+        sigprocmask(SIG_SETMASK,&prev,NULL);
+        while (fgpid(job_list)!=0)
+        {
+            sigsuspend(&prev);
+        }
+        sigprocmask(SIG_SETMASK,&prev,NULL);
+    }
+
 }
 
 /* 
@@ -599,7 +622,24 @@ void
 sigchld_handler(int sig) 
 {
     int olderror = errno;
-    pid = waitpid(-1,NULL,WNOHANG | WUNTRACED);
+    int status;
+    while ((pid = waitpid(-1,&status,WNOHANG | WUNTRACED)) > 0)
+    {
+        struct job_t *job = getjobpid(job_list,pid);
+        
+        if (WIFEXITED(status))
+        {
+            job -> state = ST;
+            deletejob(job_list,pid);
+        }
+        if (WIFSIGNALED(status))
+        {
+            job -> state = ST;
+            sio_put("Job [%d] (%d) terminated by signal %d\n",
+            job->jid,job->pid,WTERMSIG(status));
+            deletejob(job_list,pid);
+        }
+    }
     errno = olderror;
     return;
 }
@@ -612,6 +652,23 @@ sigchld_handler(int sig)
 void 
 sigint_handler(int sig) 
 {
+    //sigset_t mask_all,prev;
+    //sigfillset(&mask_all);
+
+    //sigprocmask(SIG_BLOCK, &mask_all, &prev);
+    pid = fgpid(job_list);
+    //sigprocmask(SIG_SETMASK,&prev,NULL);
+    if (pid != 0)
+    {
+        //sio_put("%d\n",fgpid(job_list));
+        if (kill(-pid,SIGINT) == -1)
+        {
+            sio_put("kill error\n");
+            exit(0);                        
+        }
+        return;
+    }
+    
     return;
 }
 

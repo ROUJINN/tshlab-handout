@@ -1,9 +1,14 @@
-简单来说，shell 有两种执行模式：
+心得：
+./myspin1 &
+发现有输出，但自己没有，不知道是在eval处理还是在handler那加，那就去tshref里试一下
 
+fork后子进程会继承父进程的信号处理设置，再继续exec后就不会继承这个信号处理设置了。
+
+
+简单来说，shell 有两种执行模式：
 如果用户输入的命令是内置命令，那么 shell 会直接在当前进程执行（例如 jobs）
 如果用户输入的是一个可执行程序的路径，那么 shell 会 fork 出一个新进程，并且在这个子进程中执行该程序（例如 /bin/ls -l -d）
 第二种情况中，每个子进程称为一个 job（当然也可以不止一个，通过管道机制，不过我们这里的实现不需要考虑管道）（即当有管道机制时，一个job里可以有多个子进程，一个job会对应一个进程组）
-
 如果命令以 & 结束，那么这个 job 会在后台执行（比如 /bin/ls -l -d &），也就是说 shell 本身不会等待 job 执行完成，直接可以继续输入其他命令；而在其他情况下，则是在前台运行，shell 会等待 job 完成，用户才可以继续输入命令。也就是说同一个时间只可能有一个前台任务，但是后台任务可以有任意多个。
 
 /* Here are helper routines that we've provided for you */
@@ -59,12 +64,15 @@ struct job_t job_list[MAXJOBS]; /* The job list */
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
-./runtrace -f trace01.txt -s ./tshref -V
-./runtrace -f trace01.txt -s ./tsh
-./sdriver -t 03 -V
+./runtrace -f trace08.txt -s ./tshref -V
+./runtrace -f trace06.txt -s ./tsh -V
+./sdriver -t 08 -V
 
 ./sdriver -i 1
 
+./myspin1
+./myspin2 1
+./myintp
 
 octal \076 is > and octal \046 is &
 
