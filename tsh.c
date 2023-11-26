@@ -674,7 +674,7 @@ sigchld_handler(int sig)
     //printf("catch sigchld\n");
     int olderror = errno;
     int status;
-    while ((pid = waitpid(-1,&status,WNOHANG | WUNTRACED)) > 0)
+    while ((pid = waitpid(-1,&status,WNOHANG | WUNTRACED | WCONTINUED)) > 0)
     {
         struct job_t *job = getjobpid(job_list,pid);
         
@@ -696,6 +696,10 @@ sigchld_handler(int sig)
             job -> state = ST;
             sio_put("Job [%d] (%d) stopped by signal %d\n",
             job->jid,job->pid,WSTOPSIG(status));            
+        }
+        if (WIFCONTINUED(status))
+        {
+            job -> state = BG;
         }
     }
     errno = olderror;

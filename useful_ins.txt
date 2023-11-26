@@ -70,7 +70,7 @@ struct job_t job_list[MAXJOBS]; /* The job list */
 
 ./runtrace -f trace25.txt -s ./tshref -V
 ./runtrace -f trace18.txt -s ./tsh -V
-./sdriver -t 23 -V
+./sdriver -t 31 -V
 
 ./mycat < mycat.c
 ./mycat
