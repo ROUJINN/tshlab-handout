@@ -2,6 +2,9 @@
  * tsh - A tiny shell program with job control
  * 
  * 罗骏 2200011351@stu.pku.edu.cn
+ * 
+ * tsh可以有前台后台job，支持内置命令fg, bg, jobs, quit, kill, nohup和外部程序
+ * 的运行，但是外部程序需给出完成路径，支持io重定向，不支持管道
  */
 #include <assert.h>
 #include <stdio.h>
@@ -28,6 +31,7 @@
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
+/* 用来处理-pid和-jid的宏，避免magic number */
 #define POSITIVE      0
 #define NEGATIVE      1
 
@@ -198,7 +202,19 @@ main(int argc, char **argv)
  * the foreground, wait for it to terminate and then return.  Note:
  * each child process must have a unique process group ID so that our
  * background children don't receive SIGINT (SIGTSTP) from the kernel
- * when we type ctrl-c (ctrl-z) at the keyboard.  
+ * when we type ctrl-c (ctrl-z) at the keyboard.
+ * 
+ * 具体实现为对tok.builtins分情况，对内置命令和外部程序分别处理。实现有些要点
+ * 1. 与书上不一样，这里在fork前要block3个信号，原因是race，可能子进程很快的发了
+ * sigint或sigstp
+ * 2. fork后子进程会继承父进程的信号处理设置，再继续exec后就不会继承这个信号处理设置了
+ * 所以在这里不用担心信号处理程序会影响子进程
+ * 3. 根据书上要求，由于addjob要访问全局变量job_list，所以访问前最好阻塞所有信号
+ * 虽然试了一下，在这里，不阻塞也行
+ * 4. 子进程结束后必须exit(0)，但是main不能，只能return
+ * 
+ * 个人感觉没必要把eval拆成smaller functions，因为每种情况都需要用到很多eval里的
+ * 局部变量,如果拆成smaller functions那么这些function会需要很多参数，反而不直观。
  */
 void 
 eval(char *cmdline) 
@@ -231,7 +247,6 @@ eval(char *cmdline)
 
     if (tok.builtins == BUILTIN_JOBS)
     {
-        int fd_out;
         if (tok.outfile)
         {
             if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
@@ -246,7 +261,8 @@ eval(char *cmdline)
             listjobs(job_list,STDOUT_FILENO);
         }
         return;
-    }  
+    }
+
     if (tok.builtins == BUILTIN_BG)
     {
         if ((tok.argc != 2) | (tok.argv == NULL))
@@ -284,6 +300,7 @@ eval(char *cmdline)
         }
         printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);         
     }
+
     if (tok.builtins == BUILTIN_FG)
     {
         if ((tok.argc != 2) | (tok.argv == NULL))
@@ -385,7 +402,7 @@ eval(char *cmdline)
         sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
         if (kill(-job->pid,SIGTERM) == -1)
         {
-            fprintf(stdout,"kill error\n");
+            fprintf(stderr, "error:%s\n", strerror(errno));
             return;                        
         }
     }
@@ -400,11 +417,11 @@ eval(char *cmdline)
                 fprintf(stderr, "error:%s\n", strerror(errno));
                 return;
             }   
-            if (dup2(fd_in,STDIN_FILENO)==-1)
+            if (dup2(fd_in,STDIN_FILENO) == -1)
             {
-                printf("no\n");
-            }
-            close(fd_in);               
+                fprintf(stderr, "error:%s\n", strerror(errno));
+                return;
+            }               
         }
         if (tok.outfile)
         {
@@ -413,8 +430,11 @@ eval(char *cmdline)
                 fprintf(stderr, "error:%s\n", strerror(errno));
                 return;
             }
-            printf("%d\n",fd_out);
-            dup2(fd_out,STDOUT_FILENO);                
+            if ((dup2(fd_out,STDOUT_FILENO)) == -1)
+            {
+                fprintf(stderr, "error:%s\n", strerror(errno));
+                return;
+            }                
         }
         if ((pid = fork()) == 0)
         {
@@ -422,7 +442,7 @@ eval(char *cmdline)
             sigprocmask(SIG_SETMASK, &mask_sighup,NULL);
             if (execve(tok.argv[1],&tok.argv[1],environ) < 0)
             {
-                printf("%s: Command not found\n",cmdline);
+                fprintf(stdout,"%s: Command not found\n",cmdline);
                 exit(0);
             }
         }
@@ -462,11 +482,11 @@ eval(char *cmdline)
                     fprintf(stderr, "error:%s\n", strerror(errno));
                     return;
                 }   
-                if (dup2(fd_in,STDIN_FILENO)==-1)
+                if (dup2(fd_in,STDIN_FILENO) == -1)
                 {
-                    printf("no\n");
-                }
-                close(fd_in);               
+                    fprintf(stderr, "error:%s\n", strerror(errno));
+                    return;
+                }               
             }
             if (tok.outfile)
             {
@@ -475,12 +495,15 @@ eval(char *cmdline)
                     fprintf(stderr, "error:%s\n", strerror(errno));
                     return;
                 }
-                printf("%d\n",fd_out);
-                dup2(fd_out,STDOUT_FILENO);                
+                if ((dup2(fd_out,STDOUT_FILENO)) == -1)
+                {
+                    fprintf(stderr, "error:%s\n", strerror(errno));
+                    return;
+                }              
             }
             if (execve(tok.argv[0],tok.argv,environ) < 0)
             {
-                printf("%s: Command not found\n",cmdline);
+                fprintf(stdout,"%s: Command not found\n",cmdline);
                 exit(0);
             }
         }
@@ -669,7 +692,11 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
  *     a child job terminates (becomes a zombie), or stops because it
  *     received a SIGSTOP, SIGTSTP, SIGTTIN or SIGTTOU signal. The 
  *     handler reaps all available zombie children, but doesn't wait 
- *     for any other currently running children to terminate.  
+ *     for any other currently running children to terminate.
+ * 
+ * 子进程本来在后台处在停止态，接收到SIGCONT后被唤醒时，也会发出sigchld
+ * 各个宏的定义见书本
+ * 注意在信号处理程序中需要用安全的sio_put
  */
 void 
 sigchld_handler(int sig) 
@@ -710,7 +737,10 @@ sigchld_handler(int sig)
 /* 
  * sigint_handler - The kernel sends a SIGINT to the shell whenver the
  *    user types ctrl-c at the keyboard.  Catch it and send it along
- *    to the foreground job.  
+ *    to the foreground job. 
+ * 
+ * 前台作业只有一个，所以这里用if不用while循环也行
+ * 更新job的状态就放在sigchld里来完成 
  */
 void 
 sigint_handler(int sig) 
@@ -720,19 +750,20 @@ sigint_handler(int sig)
     {
         if (kill(-pid,SIGINT) == -1)
         {
-            sio_put("kill error\n");
+            sio_put("kill error:%s\n",errno);
             exit(0);                        
         }
         return;
     }
-    
     return;
 }
 
 /*
  * sigtstp_handler - The kernel sends a SIGTSTP to the shell whenever
  *     the user types ctrl-z at the keyboard. Catch it and suspend the
- *     foreground job by sending it a SIGTSTP.  
+ *     foreground job by sending it a SIGTSTP.
+ * 
+ * 思路同上sigint_handler  
  */
 void sigtstp_handler(int sig) 
 {

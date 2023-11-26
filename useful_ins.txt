@@ -7,6 +7,15 @@ fork后子进程会继承父进程的信号处理设置，再继续exec后就不
 对于下面这种类型的debug，仔细检查一下括号的位置，很容易加错
 if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
 
+./sdriver
+
+style:
+check the return value of EVERY system call
+break up large functions such as eval into smaller helper functions
+keep your lines within 80 characters.
+
+You should have no magic numbers in your code
+Variable names and function names should not be too long but still describe what they are being used for
 
 
 简单来说，shell 有两种执行模式：
