@@ -80,6 +80,7 @@ struct cmdline_tokens {
 
 /* Function prototypes */
 void eval(char *cmdline);
+void exec_out_command(struct cmdline_tokens tok,char *cmdline,int bg);
 
 void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
@@ -230,6 +231,7 @@ eval(char *cmdline)
 
     if (tok.builtins == BUILTIN_JOBS)
     {
+        int fd_out;
         if (tok.outfile)
         {
             if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
@@ -252,40 +254,35 @@ eval(char *cmdline)
             fprintf(stdout,"invalid instruction\n");
             return;
         }
+
+        struct job_t *job;
         if (tok.argv[1][0] == '%')
         {
             int jid = atoi(&tok.argv[1][1]);
-            struct job_t *job = getjobjid(job_list,jid);
+            job = getjobjid(job_list,jid);
             if (job == NULL)
             {
                 fprintf(stdout,"invalid instruction\n");
                 return;
-            }
-            job -> state = BG;
-            if (kill(-job->pid,SIGCONT) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
-            }
-            printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);                   
+            }                  
         }
         else
         {
             int pid = atoi(tok.argv[1]);
-            struct job_t *job = getjobpid(job_list,pid);
+            job = getjobpid(job_list,pid);
             if (job == NULL)
             {
                 fprintf(stdout,"invalid instruction\n");
                 return;
-            }
-            job -> state = BG;
-            if (kill(-job->pid,SIGCONT) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
-            }
-            printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);                         
+            }                     
         }
+        job -> state = BG;
+        if (kill(-job->pid,SIGCONT) == -1)
+        {
+            fprintf(stdout,"kill error\n");
+            return;                        
+        }
+        printf("[%d] (%d) %s\n",job->jid,job->pid,job->cmdline);         
     }
     if (tok.builtins == BUILTIN_FG)
     {
@@ -336,6 +333,8 @@ eval(char *cmdline)
             fprintf(stdout,"invalid instruction\n");
             return;
         }
+
+        struct job_t *job;
         if (tok.argv[1][0] == '%')
         {
             int jid = atoi(&tok.argv[1][1]);
@@ -345,7 +344,7 @@ eval(char *cmdline)
                 jid = -jid;
                 jid_flag = NEGATIVE;
             }
-            struct job_t *job = getjobjid(job_list,jid);
+            job = getjobjid(job_list,jid);
             if (job == NULL)
             {
                 if (jid_flag == POSITIVE)
@@ -357,13 +356,6 @@ eval(char *cmdline)
                     fprintf(stdout,"%%%d: No such process group\n",jid);
                 }
                 return;
-            }
-            job -> state = ST;
-            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
-            if (kill(-job->pid,SIGTERM) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
             }                    
         }
         else
@@ -375,7 +367,7 @@ eval(char *cmdline)
                 pid = -pid;
                 pid_flag = NEGATIVE;
             }
-            struct job_t *job = getjobpid(job_list,pid);
+            job = getjobpid(job_list,pid);
             if (job == NULL)
             {
                 if (pid_flag == POSITIVE)
@@ -387,26 +379,47 @@ eval(char *cmdline)
                     fprintf(stdout,"(%d): No such process group\n",pid);
                 }
                 return;
-            }
-            job -> state = ST;
-            sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
-            if (kill(-job->pid,SIGTERM) == -1)
-            {
-                fprintf(stdout,"kill error\n");
-                return;                        
             }                                    
+        }
+        job -> state = ST;
+        sigprocmask(SIG_BLOCK, &mask_sigchld,&prev);
+        if (kill(-job->pid,SIGTERM) == -1)
+        {
+            fprintf(stdout,"kill error\n");
+            return;                        
         }
     }
 
     if (tok.builtins == BUILTIN_NOHUP)
     {
-        //sigprocmask(SIG_BLOCK, &mask_sighup, &prev_for_pid);
         sigprocmask(SIG_BLOCK, &mask_three, &prev);
+        if (tok.infile)
+        {
+            if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
+            {
+                fprintf(stderr, "error:%s\n", strerror(errno));
+                return;
+            }   
+            if (dup2(fd_in,STDIN_FILENO)==-1)
+            {
+                printf("no\n");
+            }
+            close(fd_in);               
+        }
+        if (tok.outfile)
+        {
+            if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
+            {
+                fprintf(stderr, "error:%s\n", strerror(errno));
+                return;
+            }
+            printf("%d\n",fd_out);
+            dup2(fd_out,STDOUT_FILENO);                
+        }
         if ((pid = fork()) == 0)
         {
             setpgid(0,0);
             sigprocmask(SIG_SETMASK, &mask_sighup,NULL);
-            // sio_put("%d %d\n",getpid(),getpgrp());
             if (execve(tok.argv[1],&tok.argv[1],environ) < 0)
             {
                 printf("%s: Command not found\n",cmdline);
@@ -418,7 +431,6 @@ eval(char *cmdline)
         {
             sigprocmask(SIG_BLOCK, &mask_all, NULL);
             addjob(job_list,pid,BG,cmdline);
-            //sigprocmask(SIG_SETMASK,&prev,NULL);
             printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
             sigprocmask(SIG_SETMASK,&prev,NULL);
         }
@@ -438,11 +450,6 @@ eval(char *cmdline)
 
     if (tok.builtins == BUILTIN_NONE)
     {
-        // int fd = open(tok.infile,O_RDONLY);
-        // printf("%d\n",fd);
-        // char c[10];
-        // read(fd,&c,10);
-        // printf("%s\n",c);
         sigprocmask(SIG_BLOCK, &mask_three, &prev);
         if ((pid = fork()) == 0)
         {
@@ -471,7 +478,6 @@ eval(char *cmdline)
                 printf("%d\n",fd_out);
                 dup2(fd_out,STDOUT_FILENO);                
             }
-            // sio_put("%d %d\n",getpid(),getpgrp());
             if (execve(tok.argv[0],tok.argv,environ) < 0)
             {
                 printf("%s: Command not found\n",cmdline);
@@ -483,7 +489,6 @@ eval(char *cmdline)
         {
             sigprocmask(SIG_BLOCK, &mask_all, NULL);
             addjob(job_list,pid,BG,cmdline);
-            //sigprocmask(SIG_SETMASK,&prev,NULL);
             printf("[%d] (%d) %s\n",pid2jid(pid),pid,cmdline);
             sigprocmask(SIG_SETMASK,&prev,NULL);
         }
@@ -500,8 +505,6 @@ eval(char *cmdline)
             sigprocmask(SIG_SETMASK,&prev,NULL);
         }
     }
-
-
 }
 
 /* 
@@ -671,7 +674,6 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
 void 
 sigchld_handler(int sig) 
 {
-    //printf("catch sigchld\n");
     int olderror = errno;
     int status;
     while ((pid = waitpid(-1,&status,WNOHANG | WUNTRACED | WCONTINUED)) > 0)
@@ -680,7 +682,6 @@ sigchld_handler(int sig)
         
         if (WIFEXITED(status))
         {
-            //printf("a1\n");
             job -> state = ST;
             deletejob(job_list,pid);
         }
@@ -714,15 +715,9 @@ sigchld_handler(int sig)
 void 
 sigint_handler(int sig) 
 {
-    //sigset_t mask_all,prev;
-    //sigfillset(&mask_all);
-
-    //sigprocmask(SIG_BLOCK, &mask_all, &prev);
     pid = fgpid(job_list);
-    //sigprocmask(SIG_SETMASK,&prev,NULL);
     if (pid != 0)
     {
-        //sio_put("%d\n",fgpid(job_list));
         if (kill(-pid,SIGINT) == -1)
         {
             sio_put("kill error\n");
@@ -744,7 +739,6 @@ void sigtstp_handler(int sig)
     pid = fgpid(job_list);
     if (pid != 0)
     {
-        //sio_put("%d\n",fgpid(job_list));
         if (kill(-pid,SIGTSTP) == -1)
         {
             sio_put("kill error\n");
@@ -764,8 +758,6 @@ sigquit_handler(int sig)
 {
     sio_error("Terminating after receipt of SIGQUIT signal\n");
 }
-
-
 
 /*********************
  * End signal handlers
