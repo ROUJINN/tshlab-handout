@@ -4,6 +4,10 @@
 
 fork后子进程会继承父进程的信号处理设置，再继续exec后就不会继承这个信号处理设置了。
 
+对于下面这种类型的debug，仔细检查一下括号的位置，很容易加错
+if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
+
+
 
 简单来说，shell 有两种执行模式：
 如果用户输入的命令是内置命令，那么 shell 会直接在当前进程执行（例如 jobs）
@@ -66,14 +70,12 @@ struct job_t job_list[MAXJOBS]; /* The job list */
 
 ./runtrace -f trace25.txt -s ./tshref -V
 ./runtrace -f trace18.txt -s ./tsh -V
-./sdriver -t 25 -V
+./sdriver -t 23 -V
 
-./myhup
-nohup ./myhup
+./mycat < mycat.c
+./mycat
 
 ./sdriver -i 1
-
-26-30都对，31不对
 
 octal \076 is > and octal \046 is &
 

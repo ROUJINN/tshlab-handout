@@ -203,7 +203,7 @@ void
 eval(char *cmdline) 
 {
     int bg;              /* should the job run in bg or fg? */
-    int fd;
+    int fd_in,fd_out;
     sigset_t mask_all,mask_sigchld,mask_sighup,mask_three,prev;
     struct cmdline_tokens tok;
 
@@ -232,12 +232,12 @@ eval(char *cmdline)
     {
         if (tok.outfile)
         {
-            if ((fd = open(tok.outfile,O_RDWR) == -1))
+            if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
             {
                 fprintf(stderr, "error:%s\n", strerror(errno));
                 return;
             }
-            listjobs(job_list,fd);
+            listjobs(job_list,fd_out);
         }
         else
         {
@@ -438,11 +438,39 @@ eval(char *cmdline)
 
     if (tok.builtins == BUILTIN_NONE)
     {
+        // int fd = open(tok.infile,O_RDONLY);
+        // printf("%d\n",fd);
+        // char c[10];
+        // read(fd,&c,10);
+        // printf("%s\n",c);
         sigprocmask(SIG_BLOCK, &mask_three, &prev);
         if ((pid = fork()) == 0)
         {
             setpgid(0,0);
             sigprocmask(SIG_SETMASK, &prev,NULL);
+            if (tok.infile)
+            {
+                if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
+                {
+                    fprintf(stderr, "error:%s\n", strerror(errno));
+                    return;
+                }   
+                if (dup2(fd_in,STDIN_FILENO)==-1)
+                {
+                    printf("no\n");
+                }
+                close(fd_in);               
+            }
+            if (tok.outfile)
+            {
+                if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
+                {
+                    fprintf(stderr, "error:%s\n", strerror(errno));
+                    return;
+                }
+                printf("%d\n",fd_out);
+                dup2(fd_out,STDOUT_FILENO);                
+            }
             // sio_put("%d %d\n",getpid(),getpgrp());
             if (execve(tok.argv[0],tok.argv,environ) < 0)
             {
@@ -464,6 +492,7 @@ eval(char *cmdline)
             sigprocmask(SIG_BLOCK, &mask_all, NULL);
             addjob(job_list,pid,FG,cmdline);
             sigprocmask(SIG_SETMASK,&prev,NULL);
+            sigprocmask(SIG_BLOCK, &mask_sigchld, &prev);
             while (fgpid(job_list)!=0)
             {
                 sigsuspend(&prev);
@@ -642,6 +671,7 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
 void 
 sigchld_handler(int sig) 
 {
+    //printf("catch sigchld\n");
     int olderror = errno;
     int status;
     while ((pid = waitpid(-1,&status,WNOHANG | WUNTRACED)) > 0)
@@ -650,6 +680,7 @@ sigchld_handler(int sig)
         
         if (WIFEXITED(status))
         {
+            //printf("a1\n");
             job -> state = ST;
             deletejob(job_list,pid);
         }
