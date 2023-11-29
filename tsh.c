@@ -3,8 +3,10 @@
  * 
  * 罗骏 2200011351@stu.pku.edu.cn
  * 
- * tsh可以有前台后台job，支持内置命令fg, bg, jobs, quit, kill, nohup和外部程序
- * 的运行，但是外部程序需给出完成路径，支持io重定向，不支持管道
+ * Tsh can have foreground job and background job. It supports built-in 
+ * command fg, bg, jobs, quit, kill, nohup, and can run given program, 
+ * which needs to give the path of the program. It supports I/O redirection
+ * but does not support pipe.
  */
 #include <assert.h>
 #include <stdio.h>
@@ -84,7 +86,7 @@ struct cmdline_tokens {
 
 /* Function prototypes */
 void eval(char *cmdline);
-void exec_out_command(struct cmdline_tokens tok,char *cmdline,int bg);
+void io_redirection(struct cmdline_tokens tok);
 
 void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
@@ -204,23 +206,23 @@ main(int argc, char **argv)
  * background children don't receive SIGINT (SIGTSTP) from the kernel
  * when we type ctrl-c (ctrl-z) at the keyboard.
  * 
- * 具体实现为对tok.builtins分情况，对内置命令和外部程序分别处理。实现有些要点
- * 1. 与书上不一样，这里在fork前要block3个信号，原因是race，可能子进程很快的发了
- * sigint或sigstp
- * 2. fork后子进程会继承父进程的信号处理设置，再继续exec后就不会继承这个信号处理设置了
- * 所以在这里不用担心信号处理程序会影响子进程
- * 3. 根据书上要求，由于addjob要访问全局变量job_list，所以访问前最好阻塞所有信号
- * 虽然试了一下，在这里，不阻塞也行
- * 4. 子进程结束后必须exit(0)，但是main不能，只能return
- * 
- * 个人感觉没必要把eval拆成smaller functions，因为每种情况都需要用到很多eval里的
- * 局部变量,如果拆成smaller functions那么这些function会需要很多参数，反而不直观。
+ * some keypoints:
+ * 1. Different from the textbook, We need to block three signal here before
+ * fork(). That's because race contiditon, child process may send SIGINT or 
+ * STGSTP quickly.
+ * 2. Child process will inherit parent's signal handler, but if child invoke
+ * exec(), then all signal handler will be clear, so we don't need to worry 
+ * that parent's signal handler influences child process.
+ * 3. According to textbook, since addjob() will visit global variable 
+ * job_list, I'd better block all signals before addjob(), but it turns out 
+ * that if I don't block all signals, no problem here.
+ * 4. Child process must end with exit(0), but other functions can only use 
+ * return.
  */
 void 
 eval(char *cmdline) 
 {
     int bg;              /* should the job run in bg or fg? */
-    int fd_in,fd_out;
     sigset_t mask_all,mask_sigchld,mask_sighup,mask_three,prev;
     struct cmdline_tokens tok;
 
@@ -247,6 +249,7 @@ eval(char *cmdline)
 
     if (tok.builtins == BUILTIN_JOBS)
     {
+        int fd_out;
         if (tok.outfile)
         {
             if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
@@ -410,32 +413,7 @@ eval(char *cmdline)
     if (tok.builtins == BUILTIN_NOHUP)
     {
         sigprocmask(SIG_BLOCK, &mask_three, &prev);
-        if (tok.infile)
-        {
-            if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
-            {
-                fprintf(stderr, "error:%s\n", strerror(errno));
-                return;
-            }   
-            if (dup2(fd_in,STDIN_FILENO) == -1)
-            {
-                fprintf(stderr, "error:%s\n", strerror(errno));
-                return;
-            }               
-        }
-        if (tok.outfile)
-        {
-            if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
-            {
-                fprintf(stderr, "error:%s\n", strerror(errno));
-                return;
-            }
-            if ((dup2(fd_out,STDOUT_FILENO)) == -1)
-            {
-                fprintf(stderr, "error:%s\n", strerror(errno));
-                return;
-            }                
-        }
+        io_redirection(tok);
         if ((pid = fork()) == 0)
         {
             setpgid(0,0);
@@ -475,32 +453,7 @@ eval(char *cmdline)
         {
             setpgid(0,0);
             sigprocmask(SIG_SETMASK, &prev,NULL);
-            if (tok.infile)
-            {
-                if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
-                {
-                    fprintf(stderr, "error:%s\n", strerror(errno));
-                    return;
-                }   
-                if (dup2(fd_in,STDIN_FILENO) == -1)
-                {
-                    fprintf(stderr, "error:%s\n", strerror(errno));
-                    return;
-                }               
-            }
-            if (tok.outfile)
-            {
-                if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
-                {
-                    fprintf(stderr, "error:%s\n", strerror(errno));
-                    return;
-                }
-                if ((dup2(fd_out,STDOUT_FILENO)) == -1)
-                {
-                    fprintf(stderr, "error:%s\n", strerror(errno));
-                    return;
-                }              
-            }
+            io_redirection(tok);
             if (execve(tok.argv[0],tok.argv,environ) < 0)
             {
                 fprintf(stdout,"%s: Command not found\n",cmdline);
@@ -527,6 +480,38 @@ eval(char *cmdline)
             }
             sigprocmask(SIG_SETMASK,&prev,NULL);
         }
+    }
+}
+
+void
+io_redirection(struct cmdline_tokens tok)
+{
+    int fd_in, fd_out;
+    if (tok.infile)
+    {
+        if ((fd_in = open(tok.infile,O_RDONLY)) == -1)
+        {
+            fprintf(stderr, "error:%s\n", strerror(errno));
+            return;
+        }   
+        if (dup2(fd_in,STDIN_FILENO) == -1)
+        {
+            fprintf(stderr, "error:%s\n", strerror(errno));
+            return;
+        }               
+    }
+    if (tok.outfile)
+    {
+        if ((fd_out = open(tok.outfile,O_RDWR)) == -1)
+        {
+            fprintf(stderr, "error:%s\n", strerror(errno));
+            return;
+        }
+        if ((dup2(fd_out,STDOUT_FILENO)) == -1)
+        {
+            fprintf(stderr, "error:%s\n", strerror(errno));
+            return;
+        }              
     }
 }
 
