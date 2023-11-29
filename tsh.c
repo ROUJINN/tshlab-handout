@@ -33,7 +33,7 @@
 #define BG            2   /* running in background */
 #define ST            3   /* stopped */
 
-/* 用来处理-pid和-jid的宏，避免magic number */
+/* constant to deal with -pid and -jid, thus avoid magic number*/
 #define POSITIVE      0
 #define NEGATIVE      1
 
@@ -483,6 +483,14 @@ eval(char *cmdline)
     }
 }
 
+/* io_redirection - Do I/O redirection for given command
+ * 
+ * Parameters:
+ *   tok: command line token 
+ * 
+ * Return:
+ *   none
+ */
 void
 io_redirection(struct cmdline_tokens tok)
 {
@@ -679,9 +687,10 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
  *     handler reaps all available zombie children, but doesn't wait 
  *     for any other currently running children to terminate.
  * 
- * 子进程本来在后台处在停止态，接收到SIGCONT后被唤醒时，也会发出sigchld
- * 各个宏的定义见书本
- * 注意在信号处理程序中需要用安全的sio_put
+ * notes:
+ * If a child process is stopped in background, when it receives a 
+ * SIGCONT and start running, it will send SIGCHLD too.
+ * Using safe sio_put() function in signal handler.
  */
 void 
 sigchld_handler(int sig) 
@@ -724,8 +733,9 @@ sigchld_handler(int sig)
  *    user types ctrl-c at the keyboard.  Catch it and send it along
  *    to the foreground job. 
  * 
- * 前台作业只有一个，所以这里用if不用while循环也行
- * 更新job的状态就放在sigchld里来完成 
+ * note:
+ * There's only one foreground job, so we can use if instead of while
+ * SIGCHID's handler do all the work of updating job's status.
  */
 void 
 sigint_handler(int sig) 
@@ -747,8 +757,6 @@ sigint_handler(int sig)
  * sigtstp_handler - The kernel sends a SIGTSTP to the shell whenever
  *     the user types ctrl-z at the keyboard. Catch it and suspend the
  *     foreground job by sending it a SIGTSTP.
- * 
- * 思路同上sigint_handler  
  */
 void sigtstp_handler(int sig) 
 {
